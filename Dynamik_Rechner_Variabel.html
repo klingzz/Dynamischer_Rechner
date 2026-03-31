@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pro-Simulator: Flexible Nutzungsdauer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #e9ecef;
+        color: #343a40;
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      h1 {
+        text-align: center;
+        color: #212529;
+      }
+      .container {
+        background: #ffffff;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+      }
+      .controls-section {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 25px;
+        border: 1px solid #dee2e6;
+      }
+      .slider-group {
+        margin-bottom: 20px;
+      }
+      .slider-group label {
+        display: flex;
+        justify-content: space-between;
+        font-weight: bold;
+        font-size: 1.1em;
+        margin-bottom: 10px;
+        color: #495057;
+      }
+      input[type="range"] {
+        width: 100%;
+        cursor: pointer;
+      }
+      .input-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+      .input-group {
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid #ced4da;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+      }
+      .input-group label {
+        font-weight: bold;
+        margin-bottom: 8px;
+        font-size: 0.9em;
+        color: #6c757d;
+      }
+      input[type="number"] {
+        padding: 8px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        font-size: 1em;
+      }
+      .result-box {
+        text-align: center;
+        padding: 20px;
+        margin: 25px 0;
+        border-radius: 8px;
+        font-size: 1.5em;
+        font-weight: bold;
+      }
+      .vorteilhaft {
+        background-color: #d1e7dd;
+        color: #0f5132;
+        border: 2px solid #badbcc;
+      }
+      .unvorteilhaft {
+        background-color: #f8d7da;
+        color: #842029;
+        border: 2px solid #f5c2c7;
+      }
+      canvas {
+        background-color: #fff;
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+      }
+      .section-title {
+        border-bottom: 2px solid #e9ecef;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+        color: #212529;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Interaktiver NPV-Rechner</h1>
+
+    <div class="container">
+      <div class="controls-section">
+        <h2 class="section-title">1. Rahmenbedingungen festlegen</h2>
+
+        <div class="input-grid" style="grid-template-columns: 1fr">
+          <div class="input-group">
+            <label for="A" style="color: #212529; font-size: 1.1em"
+              >Anschaffungsauszahlung (A) in €</label
+            >
+            <input
+              type="number"
+              id="A"
+              value="150000"
+              step="1000"
+              oninput="calculate()"
+            />
+          </div>
+        </div>
+
+        <div class="slider-group">
+          <label for="n_slider"
+            ><span>Nutzungsdauer (n):</span>
+            <span id="n_val">5 Jahre</span></label
+          >
+          <input
+            type="range"
+            id="n_slider"
+            min="1"
+            max="15"
+            value="5"
+            oninput="updateYears()"
+          />
+        </div>
+
+        <div class="slider-group">
+          <label for="i_slider"
+            ><span>Kalkulationszinssatz (i):</span>
+            <span id="i_val">10 %</span></label
+          >
+          <input
+            type="range"
+            id="i_slider"
+            min="1"
+            max="25"
+            value="10"
+            oninput="updateZins()"
+          />
+        </div>
+      </div>
+
+      <h2 class="section-title">2. Jährliche Zahlungsüberschüsse (e - a)</h2>
+      <div class="input-grid" id="dynamic-cf-container"></div>
+
+      <div id="resultBox" class="result-box">Wird berechnet...</div>
+
+      <canvas id="financeChart" width="800" height="350"></canvas>
+    </div>
+
+    <script>
+      let myChart = null;
+
+      // Aktualisiert den Text neben dem Zins-Slider und rechnet neu
+      function updateZins() {
+        document.getElementById("i_val").innerText =
+          document.getElementById("i_slider").value + " %";
+        calculate();
+      }
+
+      // Baut die Eingabefelder auf Basis des Jahres-Sliders auf
+      function updateYears() {
+        const n = parseInt(document.getElementById("n_slider").value);
+        document.getElementById("n_val").innerText =
+          n + (n === 1 ? " Jahr" : " Jahre");
+
+        const container = document.getElementById("dynamic-cf-container");
+
+        // Alte Werte sichern, damit sie beim Schieben nicht verschwinden
+        const currentValues = [];
+        for (let k = 1; k <= 15; k++) {
+          let el = document.getElementById("cf_" + k);
+          if (el) currentValues[k] = el.value;
+        }
+
+        container.innerHTML = "";
+
+        // Ein paar coole Startwerte, damit das Diagramm am Anfang gut aussieht
+        const defaultValues = [
+          0, 30000, 35000, 40000, 45000, 50000, 50000, 50000, 50000, 50000,
+          50000, 50000, 50000, 50000, 50000, 50000,
+        ];
+
+        for (let k = 1; k <= n; k++) {
+          let val =
+            currentValues[k] !== undefined
+              ? currentValues[k]
+              : defaultValues[k];
+
+          container.innerHTML += `
+                    <div class="input-group">
+                        <label for="cf_${k}">Jahr ${k} (€)</label>
+                        <input type="number" id="cf_${k}" value="${val}" step="500" oninput="calculate()">
+                    </div>
+                `;
+        }
+        calculate();
+      }
+
+      // Die Mathe-Magie
+      function calculate() {
+        const A = parseFloat(document.getElementById("A").value) || 0;
+        const i_percent =
+          parseFloat(document.getElementById("i_slider").value) || 0;
+        const n = parseInt(document.getElementById("n_slider").value) || 1;
+
+        const i = i_percent / 100;
+
+        let labels = ["Jahr 0"];
+        let barData = [-A];
+        let lineData = [-A];
+
+        let currentC0 = -A;
+
+        for (let k = 1; k <= n; k++) {
+          labels.push("Jahr " + k);
+          let cf_k = parseFloat(document.getElementById("cf_" + k).value) || 0;
+
+          // Formel: Cashflow / (1+i)^k
+          let discountedCF = cf_k / Math.pow(1 + i, k);
+          barData.push(discountedCF);
+
+          currentC0 += discountedCF;
+          lineData.push(currentC0);
+        }
+
+        // Ergebnisbox updaten
+        const resultBox = document.getElementById("resultBox");
+        let formattedC0 = currentC0.toLocaleString("de-DE", {
+          style: "currency",
+          currency: "EUR",
+          minimumFractionDigits: 2,
+        });
+
+        if (currentC0 >= 0) {
+          resultBox.className = "result-box vorteilhaft";
+          resultBox.innerHTML = `C0 = ${formattedC0} <br><span style="font-size: 0.6em; font-weight: normal;">Projekt ist vorteilhaft</span>`;
+        } else {
+          resultBox.className = "result-box unvorteilhaft";
+          resultBox.innerHTML = `C0 = ${formattedC0} <br><span style="font-size: 0.6em; font-weight: normal;">Projekt ist unvorteilhaft</span>`;
+        }
+
+        drawChart(labels, barData, lineData);
+      }
+
+      // Das Diagramm malen
+      function drawChart(labels, barData, lineData) {
+        const ctx = document.getElementById("financeChart").getContext("2d");
+
+        if (myChart != null) {
+          myChart.destroy();
+        }
+
+        myChart = new Chart(ctx, {
+          type: "bar",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                type: "line",
+                label: "Kumulierter Kapitalwert",
+                data: lineData,
+                borderColor: "#212529",
+                backgroundColor: "#212529",
+                borderWidth: 3,
+                fill: false,
+                tension: 0.1,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: "#fff",
+              },
+              {
+                type: "bar",
+                label: "Abgezinster Cashflow",
+                data: barData,
+                backgroundColor: function (context) {
+                  const value = context.dataset.data[context.dataIndex];
+                  return value < 0 ? "#dc3545" : "#198754"; // Rot oder Grün
+                },
+                borderRadius: 4,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              y: {
+                grid: {
+                  color: function (ctx) {
+                    if (ctx.tick.value === 0) return "#000"; // Nulllinie dick und schwarz
+                    return "#e9ecef";
+                  },
+                  lineWidth: function (ctx) {
+                    return ctx.tick.value === 0 ? 2 : 1;
+                  },
+                },
+              },
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    let label = context.dataset.label || "";
+                    if (label) {
+                      label += ": ";
+                    }
+                    if (context.parsed.y !== null) {
+                      label += new Intl.NumberFormat("de-DE", {
+                        style: "currency",
+                        currency: "EUR",
+                      }).format(context.parsed.y);
+                    }
+                    return label;
+                  },
+                },
+              },
+            },
+          },
+        });
+      }
+
+      // Startschuss beim Laden der Seite
+      window.onload = function () {
+        updateYears();
+      };
+    </script>
+  </body>
+</html>
